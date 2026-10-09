@@ -16,10 +16,11 @@ import (
 // Resources), so internal/config's viper search would otherwise fail and
 // panic at startup. Existing files are never overwritten, so user edits in
 // the per-user config tree survive upgrades.
-func ensureDesktopUserConfig() {
-	if _, err := os.Stat(filepath.Join("config", "config.yaml")); err == nil {
-		return
-	}
+func ensureDesktopUserConfig() (envPath string) {
+	// Materialize only what is missing. A repo checkout (or CI smoke test) run
+	// from the project root already has ./config/config.yaml, but not the .env
+	// that supplies DB_DRIVER and friends; skipping unconditionally left those
+	// builds without a .env and the container panicked on an empty driver.
 	base, err := os.UserConfigDir()
 	if err != nil || base == "" {
 		base = os.TempDir()
@@ -63,16 +64,30 @@ func ensureDesktopUserConfig() {
 		return os.WriteFile(dst, data, 0o644)
 	})
 
-	// Mirror the macOS bundle's Resources/.env (scripts/package-mac-app.sh
-	// copies .env.lite.example there): godotenv.Load in main reads <cwd>/.env
-	// after this chdir, which supplies DB_DRIVER=sqlite and friends without
-	// which the desktop container cannot initialize. Never overwrite user
-	// edits.
-	envPath := filepath.Join(root, ".env")
-	if _, statErr := os.Stat(envPath); statErr != nil {
-		_ = os.WriteFile(envPath, []byte(desktopEnvTemplate), 0o644)
+	// Repo checkout / CI smoke run from the project root: ./config resolves,
+	// so keep the working directory and reuse a .env there if present.
+	if _, statErr := os.Stat(filepath.Join("config", "config.yaml")); statErr == nil {
+		if _, envErr := os.Stat(".env"); envErr == nil {
+			if abs, absErr := filepath.Abs(".env"); absErr == nil {
+				return abs
+			}
+			return ".env"
+		}
+		return ""
 	}
+
+	// godotenv.Load in main reads an explicit path (see ensureDesktopEnv);
+	// without the DB_DRIVER=sqlite and friends it supplies, the desktop
+	// container cannot initialize. Never overwrite user edits.
+	if envPath == "" {
+		envPath = filepath.Join(root, ".env")
+		if _, statErr := os.Stat(envPath); statErr != nil {
+			_ = os.WriteFile(envPath, []byte(desktopEnvTemplate), 0o644)
+		}
+	}
+	// Relative data paths in the template (./data/weknora.db) resolve here.
 	_ = os.Chdir(root)
+	return envPath
 }
 
 // desktopEnvTemplate mirrors .env.lite.example (the template the macOS

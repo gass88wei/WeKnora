@@ -288,6 +288,7 @@ jobs:
           $bin = "cmd/desktop/build/bin"
           # Wails emits an extension-less binary named after -o ("WeKnora Lite");
           # the only *.exe present is the NSIS installer. Launch the bare binary.
+          if (-not (Test-Path ".env")) { @("DB_DRIVER=sqlite","DB_PATH=./data/smoke.db") | Set-Content -Path ".env" -Encoding utf8 }
           $exe = Join-Path $bin "WeKnora Lite"
           if (-not (Test-Path $exe)) { Write-Host "app binary missing: $exe"; Get-ChildItem $bin -ErrorAction SilentlyContinue | ForEach-Object Name; exit 1 }
           $err = "launch-smoke-err.txt"
