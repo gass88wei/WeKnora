@@ -86,7 +86,11 @@ func materializeJiebaDicts() string {
 			continue
 		}
 		dst := filepath.Join(dictDir, e.Name())
-		if fi, err := os.Stat(dst); err == nil && fi.Size() == e.Size() {
+		var want int64
+		if fi, err := e.Info(); err == nil {
+			want = fi.Size()
+		}
+		if fi, err := os.Stat(dst); err == nil && want > 0 && fi.Size() == want {
 			continue
 		}
 		data, err := jiebaDictFS.ReadFile("dicts/" + e.Name())
