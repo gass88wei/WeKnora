@@ -1,0 +1,27 @@
+*.sh text eol=lf
+
+# Byte-stable inputs for scripts/check-license-bundle.sh: it regex-matches
+# checksums in modules.tsv and compares go.mod versions field-by-field, so
+# CRLF from Windows checkouts (core.autocrlf=true) makes it fail in CI.
+licenses/sources/*.tsv text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Force LF on Go source + JSON golden fixtures so Windows checkouts
+# (with default core.autocrlf=true) don't trip byte-equal comparisons in
+# acceptance/contract envelope tests.
+*.go text eol=lf
+cli/acceptance/testdata/**/*.json text eol=lf
+
+# Trellis: append-only developer journals should merge cleanly across
+# parallel sessions/worktrees — each session only appends a new block, so
+# there is nothing to actually conflict on.
+#
+# Do NOT add a rule for workspace/*/index.md here — it is fully regenerated
+# every session, so a real conflict there is expected and safe to resolve by
+# picking either side (task state lives in task.json, not index.md). See
+# .trellis/spec/cli/backend/directory-structure.md for details.
+.trellis/workspace/*/journal-*.md merge=union
+
+# Unified diffs use a space to mark empty context lines.
+patches/browserskill/*.patch whitespace=-blank-at-eol

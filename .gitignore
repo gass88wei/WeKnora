@@ -2,8 +2,11 @@
 .*
 # 但不忽略特定隐藏文件和目录
 !.env.example
+!.env.lite.example
 !.gitignore
 !.github/
+!.gitattributes
+!.golangci.yml
 
 # 敏感文件
 *.pem
