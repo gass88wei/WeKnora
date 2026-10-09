@@ -189,7 +189,14 @@ jobs:
 
       - name: Install NSIS (Windows)
         if: runner.os == 'Windows'
-        run: choco install nsis -y
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          # choco's PATH update does not propagate to the runner process, so
+          # wails cannot find makensis. Expose it to later steps explicitly.
+          $dir = (Get-ChildItem "${env:ProgramFiles(x86)}\NSIS" -Filter makensis.exe -Recurse | Select-Object -First 1).Directory.FullName
+          Write-Host "makensis dir: $dir"
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
 
       # sqlite-vec's cgo package does `#include "sqlite3.h"`; macOS/Linux
       # runners provide it via the SDK/dev packages, Windows has none. Ship
