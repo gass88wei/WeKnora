@@ -1,10 +1,8 @@
 name: Build and Push Docker Image
+# Disabled in fork: no Docker Hub secrets, always fails and adds noise.
+# To re-enable, restore the push trigger below.
 on:
-  push:
-    tags:
-      - "v*"
-    branches:
-      - main
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
