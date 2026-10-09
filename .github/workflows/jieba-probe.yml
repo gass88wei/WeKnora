@@ -1,0 +1,85 @@
+name: Jieba Probe
+
+# One-off diagnostic: isolate why cppjieba::Jieba crashes (0xc0000005) on the
+# Windows CI runner during wails bindings generation.
+# Axes: runner image (windows-latest vs windows-2022), gojieba version
+# (v1.4.7 vs master), dict location (module-cache path vs plain path).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: baseline-latest
+            os: windows-latest
+            gb: v1.4.7
+          - id: image-2022
+            os: windows-2022
+            gb: v1.4.7
+          - id: deps-master
+            os: windows-latest
+            gb: master
+          - id: plain-path
+            os: windows-latest
+            gb: v1.4.7
+            plain: "true"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Probe ${{ matrix.id }}
+        shell: pwsh
+        run: |
+          Write-Output "matrix id=${{ matrix.id }} os=${{ matrix.os }} gojieba=${{ matrix.gb }}"
+          go version
+          gcc --version | Select-Object -First 1
+          New-Item -ItemType Directory -Path probe | Out-Null
+          Set-Location probe
+          go mod init probe
+          go get github.com/yanyiwu/gojieba@${{ matrix.gb }}
+          @'
+          package main
+
+          import (
+          	"fmt"
+          	"os"
+          	"path/filepath"
+
+          	"github.com/yanyiwu/gojieba"
+          )
+
+          func main() {
+          	var j *gojieba.Jieba
+          	if d := os.Getenv("JDICT"); d != "" {
+          		j = gojieba.NewJieba(
+          			filepath.Join(d, "jieba.dict.utf8"),
+          			filepath.Join(d, "hmm_model.utf8"),
+          			filepath.Join(d, "user.dict.utf8"),
+          			filepath.Join(d, "idf.utf8"),
+          			filepath.Join(d, "stop_words.utf8"),
+          		)
+          	} else {
+          		j = gojieba.NewJieba()
+          	}
+          	fmt.Println("OK:", j.Cut("我来到北京清华大学欢迎来到北京", true))
+          	j.Free()
+          }
+          '@ | Set-Content -Path main.go -Encoding utf8
+          if ('${{ matrix.plain }}' -eq 'true') {
+            $mod = go list -m -f '{{.Dir}}' github.com/yanyiwu/gojieba
+            Write-Output "module dir: $mod"
+            New-Item -ItemType Directory -Path D:\jd -Force | Out-Null
+            Copy-Item "$mod\deps\cppjieba\dict\*" D:\jd\ -Recurse -Force
+            Get-ChildItem D:\jd | Select-Object -ExpandProperty Name
+            $env:JDICT = 'D:\jd'
+          }
+          go run .
