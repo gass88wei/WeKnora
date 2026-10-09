@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	configfs "github.com/Tencent/WeKnora/config"
+	sqlitemigrations "github.com/Tencent/WeKnora/migrations/sqlite"
 )
 
 // ensureDesktopUserConfig materializes the embedded default config tree into
@@ -41,5 +42,56 @@ func ensureDesktopUserConfig() {
 		}
 		return os.WriteFile(dst, data, 0o644)
 	})
+
+	// Database migrations are read from disk at <cwd>/migrations/sqlite
+	// (internal/database/migration.go); materialize them next to the config.
+	_ = fs.WalkDir(sqlitemigrations.FS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		dst := filepath.Join(root, "migrations", "sqlite", filepath.FromSlash(path))
+		if _, statErr := os.Stat(dst); statErr == nil {
+			return nil
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+			return mkErr
+		}
+		data, readErr := sqlitemigrations.FS.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		return os.WriteFile(dst, data, 0o644)
+	})
+
+	// Mirror the macOS bundle's Resources/.env (scripts/package-mac-app.sh
+	// copies .env.lite.example there): godotenv.Load in main reads <cwd>/.env
+	// after this chdir, which supplies DB_DRIVER=sqlite and friends without
+	// which the desktop container cannot initialize. Never overwrite user
+	// edits.
+	envPath := filepath.Join(root, ".env")
+	if _, statErr := os.Stat(envPath); statErr != nil {
+		_ = os.WriteFile(envPath, []byte(desktopEnvTemplate), 0o644)
+	}
 	_ = os.Chdir(root)
 }
+
+// desktopEnvTemplate mirrors .env.lite.example (the template the macOS
+// desktop bundle ships as Resources/.env). Relative data paths resolve under
+// the per-user root because ensureDesktopUserConfig chdirs there.
+const desktopEnvTemplate = `# Generated on first run (mirrors .env.lite.example).
+GIN_MODE=debug
+LOG_LEVEL=debug
+DB_DRIVER=sqlite
+DB_PATH=./data/weknora.db
+RETRIEVE_DRIVER=sqlite
+STORAGE_TYPE=local
+LOCAL_STORAGE_BASE_DIR=./data/files
+STREAM_MANAGER_TYPE=memory
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+NEO4J_ENABLE=false
+WEKNORA_SANDBOX_MODE=disabled
+ENABLE_GRAPH_RAG=false
+CONCURRENCY_POOL_SIZE=3
+DOCREADER_ADDR=127.0.0.1:50051
+DOCREADER_TRANSPORT=grpc
+`

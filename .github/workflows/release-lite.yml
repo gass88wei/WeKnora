@@ -279,6 +279,21 @@ jobs:
             -ldflags="${LDFLAGS}" \
             -o "WeKnora Lite"
 
+      # Catches container-init panics (missing env/config/migrations) before
+      # shipping: launch the exe and only fail on Go panic output.
+      - name: Launch smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "cmd/desktop/build/bin/WeKnora Lite.exe"
+          $err = "launch-smoke-err.txt"
+          $p = Start-Process -FilePath $exe -PassThru -RedirectStandardError $err -RedirectStandardOutput "launch-smoke-out.txt"
+          Start-Sleep -Seconds 45
+          $panicked = (Test-Path $err) -and (Select-String -Path $err -Pattern 'panic:' -Quiet)
+          if ($panicked) { Get-Content $err | Select-Object -First 40; exit 1 }
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+          Write-Host "launch smoke passed (no panic)"
+
       # ── macOS: bundle .app with resources, then create DMG ──
       - name: Package macOS app
         if: runner.os == 'macOS'
