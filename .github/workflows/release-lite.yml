@@ -435,18 +435,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Upload regular files only: the desktop packaging folders match
+          # WeKnora-Lite-App_* too, and gh release upload rejects directories.
+          shopt -s nullglob
+          APP_FILES=()
+          for f in WeKnora-Lite-App_*; do
+            [ -f "$f" ] && APP_FILES+=("$f")
+          done
           if gh release view "${{ steps.ver.outputs.version }}" > /dev/null 2>&1; then
             gh release upload "${{ steps.ver.outputs.version }}" --clobber \
               WeKnora-lite_*.tar.gz \
               WeKnora-lite_*.tar.gz.sha256 \
-              WeKnora-Lite-App_*
+              "${APP_FILES[@]}"
           else
             gh release create "${{ steps.ver.outputs.version }}" \
               --title "WeKnora Lite ${{ steps.ver.outputs.version }}" \
               --notes-file notes.md \
               WeKnora-lite_*.tar.gz \
               WeKnora-lite_*.tar.gz.sha256 \
-              WeKnora-Lite-App_*
+              "${APP_FILES[@]}"
           fi
 
   # ── 4. Update Homebrew Formula (disabled in fork: depends on upstream tap) ──
