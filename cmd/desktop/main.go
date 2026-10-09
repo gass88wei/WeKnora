@@ -174,6 +174,10 @@ func main() {
 		}
 	}
 
+	// Installed builds (no repo checkout / bundle Resources) get the embedded
+	// default config tree materialized into the per-user directory.
+	ensureDesktopUserConfig()
+
 	// Load .env explicitly for the desktop app so DB_DRIVER gets loaded
 	_ = godotenv.Load()
 	configureDesktopStorage(execPath)

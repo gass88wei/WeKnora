@@ -9,6 +9,14 @@ on:
       tag:
         description: "Release tag (e.g. v0.2.0)"
         required: true
+      only:
+        description: "all = full matrix; windows = only Windows desktop + release"
+        type: choice
+        options:
+          - all
+          - windows
+        default: all
+        required: false
 
 concurrency:
   group: release-lite-${{ github.ref }}
@@ -25,6 +33,7 @@ env:
 jobs:
   # ── 1. Build frontend once, share as artifact (for Web CLI) ──
   build-frontend:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'windows'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,6 +58,7 @@ jobs:
 
   # ── 2a. Build Web CLI binary per platform (native CGO) ──
   build-binary:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'windows'
     needs: build-frontend
     strategy:
       fail-fast: false
@@ -137,6 +147,7 @@ jobs:
 
   # ── 2b. Build Desktop APP per platform (Wails) ──
   build-desktop-app:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'windows' || matrix.artifact_name == 'desktop-windows-amd64'
     strategy:
       fail-fast: false
       matrix:
@@ -352,6 +363,7 @@ jobs:
 
   # ── 3. Create GitHub Release ──
   release:
+    if: ${{ !cancelled() }}
     needs: [build-binary, build-desktop-app]
     runs-on: ubuntu-latest
     steps:
