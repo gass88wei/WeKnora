@@ -191,6 +191,22 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install nsis -y
 
+      # sqlite-vec's cgo package does `#include "sqlite3.h"`; macOS/Linux
+      # runners provide it via the SDK/dev packages, Windows has none. Ship
+      # the amalgamation header (bundled with go-sqlite3) on the include path.
+      - name: Provide SQLite headers for sqlite-vec (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          go mod download github.com/mattn/go-sqlite3
+          SQLDIR="$(cygpath -u "$(go list -m -f '{{.Dir}}' github.com/mattn/go-sqlite3)")"
+          mkdir -p sqlite-win-hdr
+          cp "$SQLDIR/sqlite3-binding.h" sqlite-win-hdr/sqlite3.h
+          cp "$SQLDIR/sqlite3ext.h" sqlite-win-hdr/sqlite3ext.h
+
+      - name: Jieba dict smoke test
+        run: go test ./internal/types -run TestJiebaSmoke -count=1 -v
+
       - name: Resolve version
         id: ver
         shell: bash
@@ -208,6 +224,9 @@ jobs:
         run: |
           export GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn
           export CGO_CFLAGS="-Wno-deprecated-declarations"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            export CGO_CFLAGS="${CGO_CFLAGS} -I$(pwd -W)/sqlite-win-hdr"
+          fi
           cd cmd/desktop
           go build -p 1 -buildvcs=false -tags "desktop,sqlite_fts5,production" -o _prebuild_tmp.exe . || true
           rm -f _prebuild_tmp.exe
@@ -220,6 +239,9 @@ jobs:
           eval "$(./scripts/get_version.sh env)"
           LDFLAGS="$(./scripts/get_version.sh ldflags) -X 'google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=warn'"
           export CGO_CFLAGS="-Wno-deprecated-declarations"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            export CGO_CFLAGS="${CGO_CFLAGS} -I$(pwd -W)/sqlite-win-hdr"
+          fi
 
           BUILD_TAGS="sqlite_fts5"
           NSIS_FLAG=""
