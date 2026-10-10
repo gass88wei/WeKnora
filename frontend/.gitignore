@@ -9,7 +9,10 @@ lerna-debug.log*
 
 node_modules
 .DS_Store
-dist
+# dist/* (not "dist"): the Go embed in ../embed.go needs dist/README.txt
+# committed so builds compile before vite runs; real build output stays ignored.
+dist/*
+!dist/README.txt
 dist-ssr
 coverage
 *.local

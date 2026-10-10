@@ -296,6 +296,22 @@ jobs:
           Start-Sleep -Seconds 45
           $panicked = (Test-Path $err) -and (Select-String -Path $err -Pattern 'panic:' -Quiet)
           if ($panicked) { Get-Content $err | Select-Object -First 40; exit 1 }
+          # UI probe: "/" must serve the embedded SPA (200 + HTML). A bare
+          # 401 JSON body means static serving fell through to auth again.
+          $txt = @(); foreach ($f in @("launch-smoke-out.txt","launch-smoke-err.txt")) { if (Test-Path $f) { $txt += Get-Content $f } }
+          $rx = [regex]::Matches(($txt -join "`n"), 'proxy -> http://127\.0\.0\.1:(\d+)')
+          $port = if ($rx.Count -gt 0) { $rx[$rx.Count-1].Groups[1].Value } else { $null }
+          if (-not $port) { $port = (Get-NetTCPConnection -State Listen -OwningProcess $p.Id -ErrorAction SilentlyContinue | Where-Object LocalAddress -in @('127.0.0.1','0.0.0.0','::') | Select-Object -First 1).LocalPort }
+          if ($port) {
+            $status = 0; $body = ""
+            try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 10; $status = [int]$r.StatusCode; $body = "$($r.Content)" }
+            catch { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } else { Write-Host "UI probe transport error: $_" } }
+            Write-Host "UI probe: status=$status"
+            if ($status -ne 200 -or $body -notmatch '(?i)<!doctype html') {
+              Write-Host "UI probe FAILED. body head: $($body.Substring(0, [Math]::Min(400, $body.Length)))"
+              exit 1
+            }
+          } else { Write-Host "WARN: backend port not found; UI probe skipped" }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
           Write-Host "launch smoke passed (no panic)"
 
