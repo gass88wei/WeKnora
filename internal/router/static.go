@@ -41,7 +41,15 @@ func serveFrontendStatic(r *gin.Engine) {
 		if _, err := fs.Stat(FrontendFallbackFS, "index.html"); err == nil {
 			logger.Infof(context.Background(), "[Router] Serving embedded frontend assets (no web/ directory on disk)")
 			registerFrontendFS(r, FrontendFallbackFS)
+			return
 		}
+		logger.Errorf(context.Background(),
+			"[Router] No frontend to serve: %s has no index.html and no embedded bundle was captured. "+
+				"Every non-API request will fall through to the auth middleware and return 401.", indexPath)
+	} else {
+		logger.Errorf(context.Background(),
+			"[Router] No frontend to serve: %s is missing and no embedded bundle is configured (FrontendFallbackFS is nil). "+
+				"Every non-API request will fall through to the auth middleware and return 401.", indexPath)
 	}
 }
 

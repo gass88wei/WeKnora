@@ -31,9 +31,11 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # ── 1. Build frontend once, share as artifact (for Web CLI) ──
+  # ── 1. Build frontend once, share as artifact (Web CLI + embedded desktop SPA) ──
+  # Must run unconditionally: the desktop build embeds frontend/dist into the
+  # binary via //go:embed, so skipping it on windows-only dispatch ships a
+  # bundle with no index.html and "/" falls through to auth (bare 401).
   build-frontend:
-    if: github.event_name != 'workflow_dispatch' || inputs.only != 'windows'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -164,7 +166,7 @@ jobs:
 
   # ── 2b. Build Desktop APP per platform (Wails) ──
   build-desktop-app:
-    needs: plan
+    needs: [plan, build-frontend]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.desktop_matrix) }}
@@ -187,6 +189,15 @@ jobs:
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      # wails.json deliberately has no frontend:build ("No Build command.
+      # Skipping."), so frontend/dist is whatever is on disk at go build time.
+      # Populate it from the shared artifact so the //go:embed in
+      # frontend/embed.go captures a real SPA instead of dist/README.txt.
+      - uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: frontend/dist/
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -482,22 +493,27 @@ jobs:
           # Upload regular files only: the desktop packaging folders match
           # WeKnora-Lite-App_* too, and gh release upload rejects directories.
           shopt -s nullglob
+          LITE_FILES=(WeKnora-lite_*.tar.gz WeKnora-lite_*.tar.gz.sha256)
           APP_FILES=()
           for f in WeKnora-Lite-App_*; do
             [ -f "$f" ] && APP_FILES+=("$f")
           done
-          if gh release view "${{ steps.ver.outputs.version }}" > /dev/null 2>&1; then
-            gh release upload "${{ steps.ver.outputs.version }}" --clobber \
-              WeKnora-lite_*.tar.gz \
-              WeKnora-lite_*.tar.gz.sha256 \
-              "${APP_FILES[@]}"
+          UPLOAD=("${LITE_FILES[@]}" "${APP_FILES[@]}")
+          # An empty array expands to zero words, which makes `gh release
+          # upload` fail with a misleading "requires at least 2 arg(s)" and
+          # hides the real cause (upstream build jobs produced nothing).
+          if [ "${#UPLOAD[@]}" -eq 0 ]; then
+            echo "::error::no build artifacts to publish; an upstream build job failed or was skipped"
+            exit 1
+          fi
+          VER="${{ steps.ver.outputs.version }}"
+          if gh release view "${VER}" > /dev/null 2>&1; then
+            gh release upload "${VER}" --clobber "${UPLOAD[@]}"
           else
-            gh release create "${{ steps.ver.outputs.version }}" \
-              --title "WeKnora Lite ${{ steps.ver.outputs.version }}" \
+            gh release create "${VER}" \
+              --title "WeKnora Lite ${VER}" \
               --notes-file notes.md \
-              WeKnora-lite_*.tar.gz \
-              WeKnora-lite_*.tar.gz.sha256 \
-              "${APP_FILES[@]}"
+              "${UPLOAD[@]}"
           fi
 
   # ── 4. Update Homebrew Formula (disabled in fork: depends on upstream tap) ──
