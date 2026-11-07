@@ -1,14 +1,22 @@
 name: Release Lite Binaries
 
 on:
-  # push:
-  #   tags:
-  #     - "v*"
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.2.0)"
+        description: "Release tag (e.g. v0.9.0)"
         required: true
+      only:
+        description: "all = full matrix; linux = only Linux desktop deb/AppImage + release"
+        type: choice
+        options:
+          - all
+          - linux
+        default: all
+        required: false
 
 concurrency:
   group: release-lite-${{ github.ref }}
@@ -18,7 +26,6 @@ permissions:
   contents: write
 
 env:
-  GO_VERSION: "1.24"
   NODE_VERSION: "22"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -47,8 +54,26 @@ jobs:
           path: frontend/dist/
           retention-days: 1
 
+  # Decides the desktop build matrix (linux-only runs skip the other platforms)
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      desktop_matrix: ${{ steps.set.outputs.desktop_matrix }}
+    steps:
+      - id: set
+        env:
+          ONLY: ${{ inputs.only }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$ONLY" = "linux" ]; then
+            echo 'desktop_matrix={"include":[{"os":"ubuntu-latest","platform":"linux/amd64","arch_label":"linux_amd64","artifact_name":"desktop-linux-amd64"}]}' >> "$GITHUB_OUTPUT"
+          else
+            echo 'desktop_matrix={"include":[{"os":"macos-14","platform":"darwin/universal","arch_label":"macOS_universal","artifact_name":"desktop-macos-universal"},{"os":"macos-14","platform":"darwin/amd64","arch_label":"macOS_amd64","artifact_name":"desktop-macos-amd64"},{"os":"macos-14","platform":"darwin/arm64","arch_label":"macOS_arm64","artifact_name":"desktop-macos-arm64"},{"os":"ubuntu-latest","platform":"linux/amd64","arch_label":"linux_amd64","artifact_name":"desktop-linux-amd64"},{"os":"windows-latest","platform":"windows/amd64","arch_label":"windows_amd64","artifact_name":"desktop-windows-amd64"}]}' >> "$GITHUB_OUTPUT"
+          fi
+
   # ── 2a. Build Web CLI binary per platform (native CGO) ──
   build-binary:
+    if: github.event_name != 'workflow_dispatch' || inputs.only != 'linux'
     needs: build-frontend
     strategy:
       fail-fast: false
@@ -74,7 +99,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - uses: actions/download-artifact@v8
@@ -137,30 +162,10 @@ jobs:
 
   # ── 2b. Build Desktop APP per platform (Wails) ──
   build-desktop-app:
+    needs: [plan, build-frontend]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            platform: darwin/universal
-            arch_label: macOS_universal
-            artifact_name: desktop-macos-universal
-          - os: macos-14
-            platform: darwin/amd64
-            arch_label: macOS_amd64
-            artifact_name: desktop-macos-amd64
-          - os: macos-14
-            platform: darwin/arm64
-            arch_label: macOS_arm64
-            artifact_name: desktop-macos-arm64
-          - os: ubuntu-latest
-            platform: linux/amd64
-            arch_label: linux_amd64
-            artifact_name: desktop-linux-amd64
-          - os: windows-latest
-            platform: windows/amd64
-            arch_label: windows_amd64
-            artifact_name: desktop-windows-amd64
+      matrix: ${{ fromJSON(needs.plan.outputs.desktop_matrix) }}
     runs-on: ${{ matrix.os }}
     env:
       CGO_ENABLED: 1
@@ -169,7 +174,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - uses: actions/setup-node@v6
@@ -301,6 +306,19 @@ jobs:
           tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
           shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
 
+      # ── Linux: desktop .deb and .AppImage ──
+      # Same payload as the tarball, plus a desktop entry, an icon and a
+      # wrapper that points DB_PATH/LOCAL_STORAGE_BASE_DIR at ~/.weknora:
+      # the packaged tree lives under /opt (deb) or a read-only mount
+      # (AppImage) and is not writable for the installed user.
+      - name: Package Linux deb + AppImage
+        if: runner.os == 'Linux'
+        run: |
+          DEB_ARCH="$(dpkg --print-architecture)" \
+            bash ./scripts/package-linux-desktop.sh \
+              "${{ steps.ver.outputs.version }}" \
+              "cmd/desktop/build/bin/WeKnora Lite"
+
       # ── Windows: NSIS installer includes licenses and corresponding source ──
       - name: Package Windows app
         if: runner.os == 'Windows'
@@ -319,10 +337,16 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: |
             WeKnora-Lite-App_*
+            WeKnora-Lite-App_*.deb
+            WeKnora-Lite-App_*.AppImage
           retention-days: 3
 
   # ── 3. Create GitHub Release ──
   release:
+    # build-binary is skipped on linux-only dispatch, so a plain needs list
+    # would skip this job too. !cancelled() + always-available artifacts is
+    # the intent; the upload step fails when nothing was produced.
+    if: ${{ !cancelled() }}
     needs: [build-binary, build-desktop-app]
     runs-on: ubuntu-latest
     steps:
@@ -396,57 +420,103 @@ jobs:
           | `WeKnora-Lite-App_*_macOS_universal.dmg` | macOS (Intel + Apple Silicon) |
           | `WeKnora-Lite-App_*_macOS_amd64.dmg` | macOS Intel |
           | `WeKnora-Lite-App_*_macOS_arm64.dmg` | macOS Apple Silicon |
-          | `WeKnora-Lite-App_*_linux_amd64.tar.gz` | Linux x86_64 |
+          | `WeKnora-Lite-App_*_linux_amd64.tar.gz` | Linux x86_64（解压即用） |
+          | `WeKnora-Lite-App_*_amd64.deb` | Linux x86_64（Debian/Ubuntu/Deepin 安装包） |
+          | `WeKnora-Lite-App_*_amd64.AppImage` | Linux x86_64（免安装单文件） |
           | `WeKnora-Lite-App_*_windows_amd64_setup.exe` | Windows x86_64 (安装包) |
+
+          #### Linux deb 安装
+
+          ```bash
+          sudo apt install ./WeKnora-Lite-App_*_amd64.deb
+          ```
+
+          依赖 `libgtk-3-0`、`libwebkit2gtk-4.1-0`，apt 会自动处理。
+          安装后从应用菜单启动，或直接运行 `weknora-lite`。
+
+          #### Linux AppImage
+
+          ```bash
+          chmod +x WeKnora-Lite-App_*_amd64.AppImage
+          ./WeKnora-Lite-App_*_amd64.AppImage
+          ```
+
+          AppImage 不打包 GTK/WebKit，宿主必须已安装 `libwebkit2gtk-4.1-0`
+          （缺失时 AppRun 会直接报错并给出安装命令）。如果提示 FUSE 错误，
+          用 `./*.AppImage --appimage-extract-and-run` 运行。
+
+          #### 数据位置
+
+          桌面版数据库、上传文件与日志都在 `~/.weknora/`（deb 与 AppImage 相同）。
+          删除软件包不会删除该目录；需要彻底清理时手动删除。
 
           详细文档见 [LITE.md](docs/LITE.md)。
           NOTES
 
-      - name: Create release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.ver.outputs.version }}" \
-            --title "WeKnora Lite ${{ steps.ver.outputs.version }}" \
-            --notes-file notes.md \
-            WeKnora-lite_*.tar.gz \
-            WeKnora-lite_*.tar.gz.sha256 \
-            WeKnora-Lite-App_* || true
-
-  # ── 4. Update Homebrew Formula ──
-  update-homebrew:
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve version
-        id: ver
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            VERSION="${{ inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
+          # Upload regular files only: the desktop packaging folders match
+          # WeKnora-Lite-App_* too, and gh release upload rejects directories.
+          shopt -s nullglob
+          LITE_FILES=(WeKnora-lite_*.tar.gz WeKnora-lite_*.tar.gz.sha256)
+          APP_FILES=()
+          for f in WeKnora-Lite-App_*; do
+            [ -f "$f" ] && APP_FILES+=("$f")
+          done
+          UPLOAD=("${LITE_FILES[@]}" "${APP_FILES[@]}")
+          # An empty array expands to zero words, which makes `gh release
+          # upload` fail with a misleading "requires at least 2 arg(s)" and
+          # hides the real cause (upstream build jobs produced nothing).
+          if [ "${#UPLOAD[@]}" -eq 0 ]; then
+            echo "::error::no build artifacts to publish; an upstream build job failed or was skipped"
+            exit 1
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for release assets to be available
-        run: sleep 15
-
-      - name: Update Formula
-        run: ./scripts/update-homebrew-formula.sh "${{ steps.ver.outputs.version }}"
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/weknora-lite.rb
-          if git diff --cached --quiet; then
-            echo "No changes to Formula"
+          VER="${{ steps.ver.outputs.version }}"
+          if gh release view "${VER}" > /dev/null 2>&1; then
+            gh release upload "${VER}" --clobber "${UPLOAD[@]}"
           else
-            git commit -m "formula: update weknora-lite to ${{ steps.ver.outputs.version }}"
-            git push origin main
+            gh release create "${VER}" \
+              --title "WeKnora Lite ${VER}" \
+              --notes-file notes.md \
+              "${UPLOAD[@]}"
           fi
+
+  # ── 4. Update Homebrew Formula (disabled in fork: depends on the upstream tap) ──
+  # update-homebrew:
+  #   needs: release
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #       with:
+  #         ref: main
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+  #
+  #     - name: Resolve version
+  #       id: ver
+  #       run: |
+  #         if [ -n "${{ inputs.tag }}" ]; then
+  #           VERSION="${{ inputs.tag }}"
+  #         else
+  #           VERSION="${GITHUB_REF#refs/tags/}"
+  #         fi
+  #         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+  #
+  #     - name: Wait for release assets to be available
+  #       run: sleep 15
+  #
+  #     - name: Update Formula
+  #       run: ./scripts/update-homebrew-formula.sh "${{ steps.ver.outputs.version }}"
+  #
+  #     - name: Commit and push
+  #       run: |
+  #         git config user.name "github-actions[bot]"
+  #         git config user.email "github-actions[bot]@users.noreply.github.com"
+  #         git add Formula/weknora-lite.rb
+  #         if git diff --cached --quiet; then
+  #           echo "No changes to Formula"
+  #         else
+  #           git commit -m "formula: update weknora-lite to ${{ steps.ver.outputs.version }}"
+  #           git push origin main
+  #         fi
