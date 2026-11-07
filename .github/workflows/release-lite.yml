@@ -10,7 +10,7 @@ on:
         description: "Release tag (e.g. v0.9.0)"
         required: true
       only:
-        description: "all = full matrix; linux = only Linux desktop deb/AppImage + release"
+        description: "all = full matrix; linux = only Linux desktop deb + release"
         type: choice
         options:
           - all
@@ -306,12 +306,12 @@ jobs:
           tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
           shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
 
-      # ── Linux: desktop .deb and .AppImage ──
+      # ── Linux: desktop .deb ──
       # Same payload as the tarball, plus a desktop entry, an icon and a
       # wrapper that points DB_PATH/LOCAL_STORAGE_BASE_DIR at ~/.weknora:
-      # the packaged tree lives under /opt (deb) or a read-only mount
-      # (AppImage) and is not writable for the installed user.
-      - name: Package Linux deb + AppImage
+      # the packaged tree lives under /opt and is not writable for the
+      # installed user.
+      - name: Package Linux deb
         if: runner.os == 'Linux'
         run: |
           DEB_ARCH="$(dpkg --print-architecture)" \
@@ -338,7 +338,6 @@ jobs:
           path: |
             WeKnora-Lite-App_*
             WeKnora-Lite-App_*.deb
-            WeKnora-Lite-App_*.AppImage
           retention-days: 3
 
   # ── 3. Create GitHub Release ──
@@ -422,7 +421,6 @@ jobs:
           | `WeKnora-Lite-App_*_macOS_arm64.dmg` | macOS Apple Silicon |
           | `WeKnora-Lite-App_*_linux_amd64.tar.gz` | Linux x86_64（解压即用） |
           | `WeKnora-Lite-App_*_amd64.deb` | Linux x86_64（Debian/Ubuntu/Deepin 安装包） |
-          | `WeKnora-Lite-App_*_amd64.AppImage` | Linux x86_64（免安装单文件） |
           | `WeKnora-Lite-App_*_windows_amd64_setup.exe` | Windows x86_64 (安装包) |
 
           #### Linux deb 安装
@@ -434,20 +432,9 @@ jobs:
           依赖 `libgtk-3-0`、`libwebkit2gtk-4.1-0`，apt 会自动处理。
           安装后从应用菜单启动，或直接运行 `weknora-lite`。
 
-          #### Linux AppImage
-
-          ```bash
-          chmod +x WeKnora-Lite-App_*_amd64.AppImage
-          ./WeKnora-Lite-App_*_amd64.AppImage
-          ```
-
-          AppImage 不打包 GTK/WebKit，宿主必须已安装 `libwebkit2gtk-4.1-0`
-          （缺失时 AppRun 会直接报错并给出安装命令）。如果提示 FUSE 错误，
-          用 `./*.AppImage --appimage-extract-and-run` 运行。
-
           #### 数据位置
 
-          桌面版数据库、上传文件与日志都在 `~/.weknora/`（deb 与 AppImage 相同）。
+          桌面版数据库、上传文件与日志都在 `~/.weknora/`（deb 与 tar.gz 相同）。
           删除软件包不会删除该目录；需要彻底清理时手动删除。
 
           详细文档见 [LITE.md](docs/LITE.md)。
