@@ -27,10 +27,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
+	"github.com/Tencent/WeKnora/frontend"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/container"
 	"github.com/Tencent/WeKnora/internal/handler"
 	"github.com/Tencent/WeKnora/internal/logger"
+	webrouter "github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/runtime"
 	"github.com/Tencent/WeKnora/internal/stream"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -230,6 +232,10 @@ func main() {
 		panic(fmt.Sprintf("initialize desktop signing key: %v", err))
 	}
 	runtime.LogStartupEnv(context.Background())
+
+	// Single-binary UI: serve the SPA from the frontend embedded in this
+	// executable when no ./web directory exists (installed builds have none).
+	webrouter.FrontendFallbackFS = frontend.Dist()
 
 	// Install prefs readers before BuildContainer. The host sandbox is created
 	// during that call and keeps the loader functions it was given; decorating
