@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Package the WeKnora Lite desktop build for Linux as a .deb and an .AppImage.
+# Package the WeKnora Lite desktop build for Linux as a .deb.
 #
 # Usage: package-linux-desktop.sh <version> <binary-path>
 #   version      release tag, with or without the leading "v" (e.g. v0.9.0)
 #   binary-path  the Wails build output, normally "cmd/desktop/build/bin/WeKnora Lite"
 #
-# Both packages install the same layout: the executable sits next to config/,
-# migrations/sqlite/ and licenses/. cmd/desktop walks up from the executable to
-# find config/config.yaml and chdir's there, so migrations resolve relative to
-# that same directory.
+# The package installs the executable next to config/, migrations/sqlite/ and
+# licenses/. cmd/desktop walks up from the executable to find
+# config/config.yaml and chdir's there, so migrations resolve relative to that
+# same directory.
 #
-# DB_PATH and LOCAL_STORAGE_BASE_DIR are absolute paths under $HOME, because the
-# packaged tree is never writable for the installed user. godotenv does not
-# expand variables, so the paths are exported by a wrapper (deb) or AppRun
-# (AppImage) instead of being written literally into .env.lite; godotenv never
-# overrides variables that are already set.
+# DB_PATH and LOCAL_STORAGE_BASE_DIR point at $HOME, because /opt is never
+# writable for the installed user. A wrapper script in /usr/bin exports them:
+# godotenv does not expand variables and never overrides a variable that is
+# already set, so the values have to come from the environment.
 
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 <version> <binary-path>" >&2
@@ -34,9 +33,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 VERSION="${RAW_VERSION#v}"
-APP_NAME="WeKnora Lite"
 PKG_NAME="weknora-lite"
-
 test -f "${BINARY_SRC}" || { echo "desktop binary not found: ${BINARY_SRC}" >&2; exit 1; }
 
 WORK_DIR="$(mktemp -d)"
@@ -160,51 +157,5 @@ DEB_FILE="WeKnora-Lite-App_${RAW_VERSION}_${DEB_ARCH:-amd64}.deb"
 dpkg-deb --root-owner-group -Zxz --build "${deb_root}" "${DEB_FILE}"
 sha256sum "${DEB_FILE}" > "${DEB_FILE}.sha256"
 
-# ── 2. AppImage ──
-appdir="${WORK_DIR}/WeKnora-Lite.AppDir"
-mkdir -p "${appdir}/usr/bin" "${appdir}/usr/share/icons/hicolor/256x256/apps"
-cp -r "${payload}/." "${appdir}/usr/bin/"
-cp "${ICON_SRC}" "${appdir}/weknora-lite.png"
-cp "${ICON_SRC}" "${appdir}/usr/share/icons/hicolor/256x256/apps/weknora-lite.png"
-chmod 0644 "${appdir}/weknora-lite.png" \
-           "${appdir}/usr/share/icons/hicolor/256x256/apps/weknora-lite.png"
-
-desktop_entry > "${appdir}/weknora-lite.desktop"
-# AppImage tooling wants the desktop entry at the AppDir root with no absolute
-# Exec path; AppRun is what actually launches the binary.
-sed -i 's|^Exec=.*|Exec=weknora-lite|' "${appdir}/weknora-lite.desktop"
-chmod 0644 "${appdir}/weknora-lite.desktop"
-
-cat > "${appdir}/AppRun" <<'APPRUN'
-#!/bin/sh
-set -e
-
-if ! ldconfig -p 2>/dev/null | grep -q 'libwebkit2gtk-4.1'; then
-    echo "WeKnora Lite needs libwebkit2gtk-4.1." >&2
-    echo "  Debian/Ubuntu/Deepin: sudo apt install libwebkit2gtk-4.1-0" >&2
-    echo "  Fedora:               sudo dnf install webkit2gtk4.1" >&2
-    exit 1
-fi
-
-data_dir="${HOME}/.weknora/data"
-mkdir -p "${data_dir}/files"
-export DB_PATH="${data_dir}/weknora.db"
-export LOCAL_STORAGE_BASE_DIR="${data_dir}/files"
-
-exec "${APPDIR}/usr/bin/weknora-lite" "$@"
-APPRUN
-chmod 0755 "${appdir}/AppRun"
-
-appimagetool="${WORK_DIR}/appimagetool"
-curl -fsSL -o "${appimagetool}" \
-    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-chmod 0755 "${appimagetool}"
-
-APPIMAGE_FILE="WeKnora-Lite-App_${RAW_VERSION}_${DEB_ARCH:-amd64}.AppImage"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${appimagetool}" \
-    --no-appstream "${appdir}" "${APPIMAGE_FILE}"
-chmod 0755 "${APPIMAGE_FILE}"
-sha256sum "${APPIMAGE_FILE}" > "${APPIMAGE_FILE}.sha256"
-
 echo "Built:"
-ls -la "${DEB_FILE}" "${APPIMAGE_FILE}"
+ls -la "${DEB_FILE}"
