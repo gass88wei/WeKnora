@@ -36,6 +36,26 @@ VERSION="${RAW_VERSION#v}"
 PKG_NAME="weknora-lite"
 test -f "${BINARY_SRC}" || { echo "desktop binary not found: ${BINARY_SRC}" >&2; exit 1; }
 
+# Guard against the runner's glibc drifting newer than the systems we target.
+# github's ubuntu-latest currently builds a binary needing GLIBC_2.43 and
+# CXXABI_1.3.15, which fails to start on Debian 12 / Deepin 25 (glibc 2.38).
+# Fail here instead of publishing a package that cannot run.
+max_glibc="$(
+    strings "${BINARY_SRC}" 2>/dev/null |
+        grep -oE '^GLIBC_2\.[0-9]+$' |
+        sed 's/GLIBC_//' |
+        sort -V |
+        tail -1 || true
+)"
+if [ -n "${max_glibc}" ]; then
+    echo ">> binary requires glibc ${max_glibc}"
+    if [ "$(printf '%s\n%s\n' "${max_glibc}" "2.38" | sort -V | tail -1)" != "2.38" ]; then
+        echo "ERROR: binary needs glibc ${max_glibc} but the oldest supported target is 2.38." >&2
+        echo "       Build on an older runner (ubuntu-22.04) so the binary stays portable." >&2
+        exit 1
+    fi
+fi
+
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
