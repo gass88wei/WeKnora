@@ -56,6 +56,25 @@ if [ -n "${max_glibc}" ]; then
     fi
 fi
 
+# Actually try to start the binary on the oldest supported userspace. The string
+# scan above only proves what symbols are referenced; this proves the dynamic
+# loader accepts them. This is a GUI app, so failing to find a display is the
+# expected outcome on a headless container -- what must not appear is a
+# GLIBC_/CXXABI_ version error.
+if command -v docker >/dev/null 2>&1 && [ "${SKIP_SMOKE:-0}" != "1" ]; then
+    echo ">> smoke test: launching on Debian 12 (glibc 2.36)"
+    smoke_out="$(
+        docker run --rm -v "$(cd "$(dirname "${BINARY_SRC}")" && pwd):/w:ro" \
+            debian:12 "/w/$(basename "${BINARY_SRC}")" 2>&1 || true
+    )"
+    if printf '%s' "${smoke_out}" | grep -qE 'GLIBC_[0-9.]+. not found|CXXABI_[0-9.]+. not found'; then
+        echo "ERROR: binary cannot start on Debian 12:" >&2
+        printf '%s\n' "${smoke_out}" >&2
+        exit 1
+    fi
+    echo ">> smoke test passed (loader accepted the binary)"
+fi
+
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
